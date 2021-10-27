@@ -1,0 +1,40 @@
+Instructions:
+
+all instructions are either 2 bytes or 4 bytes (mostly involving imm values and addresses)
+
+System
+
+Restart
+F000 :  PC = 0 reset Registers
+
+----------------------------------------------------------------------
+----------------------------------------------------------------------
+
+Maths And Logic
+
+0FXY
+
+F : { 0 = ADD, 1 = SUB, 2 = MUL, 3 = DIV, 4 = AND, 5 = OR, 6 = NOT, 7 = XOR, 8 = SHIFT RIGHT { RY }, 9 = SHIFT LEFT { RY } }
+X : REG, Target { 0 ... F }
+Y : REG { 0 ... F }
+
+----------------------------------------------------------------------
+----------------------------------------------------------------------
+
+Register Manipulation
+
+1FXY { NNNN }
+
+F : { 0 = LOAD IMM, 1 = LOAD REG , 2 = SWAP  }
+X : REG, Target { 0 ... F}
+Y : REG, { 0 ... F }
+
+----------------------------------------------------------------------
+----------------------------------------------------------------------
+
+
+Control Flow
+
+2FXY { NNNN }
+
+F : { 0 = JMP }
