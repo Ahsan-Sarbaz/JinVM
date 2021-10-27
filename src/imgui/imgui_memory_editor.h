@@ -62,8 +62,6 @@
 #pragma warning (disable: 4996) // warning C4996: 'sprintf': This function or variable may be unsafe.
 #endif
 
-#include "imgui.h"
-
 struct MemoryEditor
 {
     enum DataFormat

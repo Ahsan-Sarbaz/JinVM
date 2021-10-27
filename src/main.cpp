@@ -1,10 +1,10 @@
-#include "imgui.h"
-#include "imgui_impl_sdl.h"
-#include "imgui_impl_opengl3.h"
+#include <GLFW/glfw3.h>
+#include "imgui/imgui.h"
+#include "imgui/imgui_impl_glfw.h"
+#include "imgui/imgui_impl_opengl3.h"
 #include <stdio.h>
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_opengl.h>
-#include "imgui_memory_editor.h"
+#include <malloc.h>
+#include "imgui/imgui_memory_editor.h"
 
 #include <stdint.h>
 
@@ -221,31 +221,49 @@ struct Chip
     }
 };
 
+constexpr int WIDTH = 640;
+constexpr int HEIGHT = 480; 
+
+Chip* chip;
 
 int main(int argc, char **argv)
 {
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0)
+
+    if(glfwInit() != GLFW_TRUE)
     {
-        printf("Error: %s\n", SDL_GetError());
-        return -1;
+        printf("FAILED to init GLFW!\n");
+        return 1;
     }
 
+    GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "JinVM", 0, 0);
+    glfwMakeContextCurrent(window);
+    glfwSwapInterval(1);
+
+    chip = new Chip;
+
+    glfwSetKeyCallback(window , [](GLFWwindow* window, int key, int scanecode, int action, int mods){
+        if(action == GLFW_PRESS)
+        {
+            switch(key)
+            {
+                case GLFW_KEY_SPACE:
+                    chip->tick();
+                break;
+
+                case GLFW_KEY_R:
+                    chip->restart();
+                break;
+
+                case GLFW_KEY_ESCAPE:
+                    glfwSetWindowShouldClose(window, GLFW_TRUE);
+                break;
+
+            }
+        }
+    });
+
     const char *glsl_version = "#version 130";
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-    SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
-
-    SDL_Window *window = SDL_CreateWindow("CHIP-8", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 480, window_flags);
-    SDL_GLContext gl_context = SDL_GL_CreateContext(window);
-    SDL_GL_MakeCurrent(window, gl_context);
-    SDL_GL_SetSwapInterval(1); // Enable vsync
-
+    
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
@@ -264,54 +282,28 @@ int main(int argc, char **argv)
         style.Colors[ImGuiCol_WindowBg].w = 1.0f;
     }
 
-    ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
-
-    bool running = true;
-
+    
     ImVec4 clear_color = {};
 
     glMatrixMode(GL_PROJECTION_MATRIX);
     glLoadIdentity();
-    glOrtho(0, 640, 480, 0, -1, 1);
+    glOrtho(0, WIDTH, HEIGHT, 0, -1, 1);
 
     MemoryEditor memEditor;
 
-    Chip chip;
-    chip.restart();
+    chip->restart();
 
-    while (running)
+    while (!glfwWindowShouldClose(window))
     {
-        SDL_Event event;
-        while (SDL_PollEvent(&event))
-        {
-            ImGui_ImplSDL2_ProcessEvent(&event);
-
-            switch (event.type)
-            {
-            case SDL_QUIT:
-                running = false;
-                break;
-            case SDL_KEYDOWN:
-                switch (event.key.keysym.scancode)
-                {
-                case SDL_SCANCODE_ESCAPE:
-                    running = false;
-                    break;
-                case SDL_SCANCODE_SPACE:
-                    chip.tick();
-                    break;
-
-                }
-                break;
-            }
-        }
-
+        glfwPollEvents();
+        
         glClear(GL_COLOR_BUFFER_BIT);
         glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
 
         ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplSDL2_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
         // for (int y = 0; y < 32; y++)
@@ -331,21 +323,23 @@ int main(int argc, char **argv)
         // }
 
 
-        memEditor.DrawWindow("Memory Editor", chip.memory, memory_size);
+        memEditor.DrawWindow("Memory Editor", chip->memory, memory_size);
 
-        ImGui::Begin("Debug");
-        ImGui::Text("OpCode %X", chip.opcode);
-        ImGui::Text("PC %d", chip.pc);
-        ImGui::Text("R0 %d R8 %d", chip.R[0], chip.R[8]);
-        ImGui::Text("R1 %d R9 %d", chip.R[1], chip.R[9]);
-        ImGui::Text("R2 %d R10 %d", chip.R[2], chip.R[10]);
-        ImGui::Text("R3 %d R11 %d", chip.R[3], chip.R[11]);
-        ImGui::Text("R4 %d R12 %d", chip.R[4], chip.R[12]);
-        ImGui::Text("R5 %d R13 %d", chip.R[5], chip.R[13]);
-        ImGui::Text("R6 %d R14 %d", chip.R[6], chip.R[14]);
-        ImGui::Text("R7 %d R15 %d", chip.R[7], chip.R[15]);
+        if(ImGui::Begin("Debug"))
+        {
+            ImGui::Text("OpCode %X", chip->opcode);
+            ImGui::Text("PC %d", chip->pc);
+            ImGui::Text("R0 %d R8 %d", chip->R[0], chip->R[8]);
+            ImGui::Text("R1 %d R9 %d", chip->R[1], chip->R[9]);
+            ImGui::Text("R2 %d R10 %d", chip->R[2], chip->R[10]);
+            ImGui::Text("R3 %d R11 %d", chip->R[3], chip->R[11]);
+            ImGui::Text("R4 %d R12 %d", chip->R[4], chip->R[12]);
+            ImGui::Text("R5 %d R13 %d", chip->R[5], chip->R[13]);
+            ImGui::Text("R6 %d R14 %d", chip->R[6], chip->R[14]);
+            ImGui::Text("R7 %d R15 %d", chip->R[7], chip->R[15]);
 
-        ImGui::End();
+            ImGui::End();
+        }
 
         ImGui::Render();
         glViewport(0, 0, (int)io.DisplaySize.x, (int)io.DisplaySize.y);
@@ -353,21 +347,18 @@ int main(int argc, char **argv)
 
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
         {
-            SDL_Window *backup_current_window = SDL_GL_GetCurrentWindow();
-            SDL_GLContext backup_current_context = SDL_GL_GetCurrentContext();
+            GLFWwindow* backup_current_context = glfwGetCurrentContext();
             ImGui::UpdatePlatformWindows();
             ImGui::RenderPlatformWindowsDefault();
-            SDL_GL_MakeCurrent(backup_current_window, backup_current_context);
+            glfwMakeContextCurrent(backup_current_context);
         }
-
-        SDL_GL_SwapWindow(window);
+        glfwSwapBuffers(window);
     }
 
     ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 
-    SDL_GL_DeleteContext(gl_context);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    glfwDestroyWindow(window);
+    glfwTerminate();
 }
