@@ -7,6 +7,8 @@
 #include "imgui/imgui_memory_editor.h"
 
 #include <stdint.h>
+#include <vector>
+#include <string>
 
 #define RX R[(opcode & 0x00F0) >> 4]
 #define RY R[(opcode & 0x000F) >> 0]
@@ -53,6 +55,12 @@ struct Chip
         memset(R, 0, sizeof(R));
         opcode = 0;
         pc = 0;
+
+        FILE* input = fopen("out.bin", "rb");
+        fread(memory, 1, memory_size, input);
+        fclose(input);
+
+        return;
 
         uint16_t i = 0;
 
@@ -221,18 +229,347 @@ struct Chip
     }
 };
 
-constexpr int WIDTH = 640;
-constexpr int HEIGHT = 480; 
 
 Chip* chip;
 
+struct CLArgState;
+
+struct CLArg
+{
+    const char* arg;
+    void(*callback)(CLArgState*);
+    const char* usage;
+};
+
+struct CLArgState
+{
+    CLArg* args;
+    int argsCount;
+    char** argv;
+    int currentIndex;
+    bool exit_imdtly;
+    bool is_verbose;
+    int width, height;
+    char outfile_name[255];
+    char inputfile_name[255];
+    bool assemblerMode;
+};
+
+
+void printUsage(CLArgState* state)
+{
+    for (int i = 0; i < state->argsCount; i++)
+    {
+        if (state->args[i].usage != NULL)
+        {
+            printf("%s : %s\n", state->args[i].arg, state->args[i].usage);
+        }
+        else
+        {
+            printf("%s\n", state->args[i].arg);
+        }
+    }
+}
+
+CLArgState handleArgs(int argc, char** argv)
+{
+    CLArg args[] = {
+        {"--version", [](CLArgState* state)
+            {
+                printf("JinVM version 0.1\n");
+                state->exit_imdtly = true;
+            },
+            "show version number"
+        },
+
+        {"--verbose", [](CLArgState* state)
+            {
+                printf("Verbose Mode\n");
+                state->is_verbose = true;
+            },
+            "show verbose data"
+        },
+        {"--usage", [](CLArgState* state)
+            {
+                printUsage(state);
+                state->exit_imdtly = true;
+            },
+            "print usage"
+        },
+        { "--assemble", [](CLArgState* state) 
+            {
+                if (state->argv[state->currentIndex + 1] == NULL)
+                {
+                    printf("Please provide input file name\n");
+                    printUsage(state);
+                    state->exit_imdtly = true;
+                    return;
+                }
+
+                sscanf(state->argv[state->currentIndex + 1], "%s", state->inputfile_name);
+                if (state->inputfile_name == nullptr)
+                {
+                    printf("\nIncorrect input file name\n");
+                    state->exit_imdtly = true;
+                    return;
+                }
+
+                state->assemblerMode = true;
+            },
+            "assembes asm file to JinVM code"
+        },
+        {"--out", [](CLArgState* state)
+            {
+                if (state->argv[state->currentIndex + 1] == NULL)
+                {
+                    printf("Please provide output file name\n");
+                    printUsage(state);
+                    state->exit_imdtly = true;
+                    return;
+                }
+
+                sscanf(state->argv[state->currentIndex + 1], "%s.bin", state->outfile_name);
+                if (state->outfile_name == nullptr)
+                {
+                    printf("\nIncorrect out file name\n");
+                    state->exit_imdtly = true;
+                }
+            },
+            "sets the output binary file name (default is out.bin)"
+        },
+        {"--size", [](CLArgState* state)
+            {
+                if (state->argv[state->currentIndex + 1] == NULL)
+                {
+                    printf("Please provide window size\n");
+                    printUsage(state);
+                    state->exit_imdtly = true;
+                    return;
+                }
+
+                sscanf(state->argv[state->currentIndex + 1], "%d,%d", &state->width, &state->height);
+                if (state->width <= 0 || state->height <= 0)
+                {
+                    printf("\nIncorrect size\n");
+                    state->exit_imdtly = true;
+                }
+            },
+            "set size of the window format w,h (e.g --size 640,480)"
+        }
+    };
+
+    CLArgState argState = { args, sizeof(args) / sizeof(CLArg), argv };
+
+    for (int i = 1; i < argc; i++)
+    {
+        for (int j = 0; j < argState.argsCount; j++)
+        {
+            if (!strcmp(argState.argv[i], args[j].arg))
+            {
+                argState.currentIndex = i;
+                args[j].callback(&argState);
+            }
+        }
+    }
+
+    return argState;
+}
+
+#define WRITE_BYTE(x) out_buffer[++buffer_offset] = x
+#define WRITE_SHORT(x) (out_buffer)[++buffer_offset] = x >> 8; (out_buffer)[++buffer_offset] = x
+#define WRITE_BYTE_XY out_buffer[++buffer_offset] = x << 4 | y
+
+void assemble(const char* inputFilePath, const char* outputFilePath)
+{
+    if (outputFilePath && !outputFilePath[0])
+    {
+        outputFilePath = "out.bin";
+    }
+
+    if (inputFilePath && !inputFilePath[0])
+    {
+        printf("No Input file. how did this even happen!\n");
+        return;
+    }
+
+    printf("Output file is %s\n", outputFilePath);
+
+    FILE* in = fopen(inputFilePath, "rb");
+    if (!in)
+    {
+        printf("Failed to open file %s\n", inputFilePath);
+        return;
+    }
+
+    fseek(in, 0, SEEK_END);
+    int input_file_size = ftell(in);
+    if (!input_file_size)
+    {
+        printf("file %s is empty\n", inputFilePath);
+        fclose(in);
+        return;
+    }
+
+    fseek(in, 0, SEEK_SET);
+
+    char* in_buffer = (char*)malloc(sizeof(char) * input_file_size);
+    fread(in_buffer, 1, input_file_size, in);
+    in_buffer[input_file_size] = '\0';
+    //in_buffer[input_file_size + 1] = '\0';
+
+    char* out_buffer = (char*)malloc(sizeof(char) * input_file_size);
+    int buffer_offset = -1;
+    memset(out_buffer, 0, input_file_size);
+
+    std::vector<std::string> lines;
+
+    auto l = strtok(in_buffer, "\n");
+    while (l != NULL)
+    {
+        lines.emplace_back(l);
+        l = strtok(NULL, "\n");
+    }
+
+    for (int i = 0; i < lines.size(); i++)
+    {
+        std::string ins;
+        std::string arg;
+        sscanf(lines[i].c_str(), "%s %[^\n]", ins.data(), arg.data());
+        
+        uint8_t x = 0;
+        uint8_t y = 0;
+        uint16_t imm = 0;
+        uint16_t address = 0;
+
+        if (!strcmp(ins.c_str(), "LD"))
+        {   
+            sscanf(arg.c_str(), "R%d, %hu", &x, &imm);
+            WRITE_BYTE(LDIMM);
+            WRITE_BYTE(x << 4);
+            WRITE_SHORT(imm);
+        }
+        else if (!strcmp(ins.c_str(), "RESET"))
+        {
+            WRITE_BYTE(RESET);
+        }
+        else if(!strcmp(ins.c_str(), "ADD"))
+        {
+            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            WRITE_BYTE(ADD);
+            WRITE_BYTE_XY;
+        }
+        else if (!strcmp(ins.c_str(), "SUB"))
+        {
+            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            WRITE_BYTE(SUB);
+            WRITE_BYTE_XY;
+        }
+        else if (!strcmp(ins.c_str(), "MUL"))
+        {
+            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            WRITE_BYTE(MUL);
+            WRITE_BYTE_XY;
+        }
+        else if (!strcmp(ins.c_str(), "DIV"))
+        {
+            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            WRITE_BYTE(DIV);
+            WRITE_BYTE_XY;
+        }
+        else if (!strcmp(ins.c_str(), "AND"))
+        {
+            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            WRITE_BYTE(AND);
+            WRITE_BYTE_XY;
+        }
+        else if (!strcmp(ins.c_str(), "OR"))
+        {
+            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            WRITE_BYTE(OR);
+            WRITE_BYTE_XY;
+        }
+        else if (!strcmp(ins.c_str(), "NOT"))
+        {
+            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            WRITE_BYTE(NOT);
+            WRITE_BYTE_XY;
+        }
+        else if (!strcmp(ins.c_str(), "XOR"))
+        {
+            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            WRITE_BYTE(XOR);
+            WRITE_BYTE_XY;
+        }
+        else if (!strcmp(ins.c_str(), "SHR"))
+        {
+            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            WRITE_BYTE(SHR);
+            WRITE_BYTE_XY;
+        }
+        else if (!strcmp(ins.c_str(), "SHL"))
+        {
+            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            WRITE_BYTE(SHL);
+            WRITE_BYTE_XY;
+        }
+
+    }
+
+
+
+    FILE* out = fopen(outputFilePath, "wb");
+    fwrite(out_buffer, 1, sizeof(char) * input_file_size, out);
+
+
+    fclose(out);
+    fclose(in);
+
+    //this produces error i dont know why on windows
+#ifndef _WIN32
+    free(out_buffer);
+    free(in_buffer);
+#endif
+}
+
 int main(int argc, char **argv)
 {
+
+    auto argState = handleArgs(argc, argv);
+
+    if (argState.exit_imdtly)
+    {
+        return 0;
+    }
+
+    if (argState.assemblerMode)
+    {
+
+        assemble(argState.inputfile_name, argState.outfile_name);
+
+        return 0;
+    }
+
+    int WIDTH = argState.width;
+    int HEIGHT = argState.height;
+
+    if (argState.width <= 0 || argState.height <= 0)
+    {
+        WIDTH = 640;
+        HEIGHT = 480;
+    }
+
 
     if(glfwInit() != GLFW_TRUE)
     {
         printf("FAILED to init GLFW!\n");
         return 1;
+    }
+    else
+    {
+        if (argState.is_verbose)
+        {
+            printf("GLFW Initialized\n");
+        }
     }
 
     GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "JinVM", 0, 0);
