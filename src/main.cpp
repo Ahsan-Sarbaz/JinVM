@@ -9,14 +9,16 @@
 #include <stdint.h>
 #include <vector>
 #include <string>
+#include <unordered_map>
+#include <functional>
 
 #define RX R[(opcode & 0x00F0) >> 4]
-#define RY R[(opcode & 0x000F) >> 0]
+#define RY R[(opcode & 0x000F)]
 
 #define INS (opcode & 0xF000)
 #define F   (opcode & 0x0F00)
 #define X   (opcode & 0x00F0) >> 4
-#define Y   (opcode & 0x000F) >> 0
+#define Y   (opcode & 0x000F)
 
 #define ADD 0x00
 #define SUB 0x01
@@ -35,8 +37,11 @@
 
 #define JMP  0x20
 
-
 #define RESET 0xF0
+
+#define WRITE_BYTE(x) out_buffer[++buffer_offset] = x
+#define WRITE_SHORT(x) (out_buffer)[++buffer_offset] = x >> 8; (out_buffer)[++buffer_offset] = x
+#define WRITE_BYTE_XY out_buffer[++buffer_offset] = x << 4 | y
 
 constexpr size_t memory_size = sizeof(uint8_t) * 1024 * 64;
 
@@ -60,77 +65,12 @@ struct Chip
         fread(memory, 1, memory_size, input);
         fclose(input);
 
-        return;
-
-        uint16_t i = 0;
-
-        memory[i] = LDIMM; // LD R0, 3
-        memory[++i] = 0x00;
-
-        memory[++i] = 0x00;
-        memory[++i] = 3;
-
-        memory[++i] = LDIMM; // LD R1, 6
-        memory[++i] = 0x10;
-
-        memory[++i] = 0x00;
-        memory[++i] = 6;
-
-        uint8_t here = (uint8_t)i;
-        // SWAP R0, R1
-        memory[++i] = SWAP;
-        memory[++i] = 0x01;
-
-        // ADD R0, R1
-        memory[++i] = ADD;
-        memory[++i] = 0x01;
-
-        // SUB R0, R1
-        memory[++i] = SUB;
-        memory[++i] = 0x01;
-
-        // MUL R0, R1
-        memory[++i] = MUL;
-        memory[++i] = 0x01;
-
-        // DIV R0, R1
-        memory[++i] = DIV;
-        memory[++i] = 0x01;
-
-        // JMP here
-        memory[++i] = JMP;
-        memory[++i] = 0x00;
-
-        memory[++i] = 0x00;
-        memory[++i] = here + 1;
-
-        // AND R0, R1
-        memory[++i] = AND;
-        memory[++i] = 0x01;
-
-        // OR R0, R1
-        memory[++i] = OR;
-        memory[++i] = 0x01;
-
-        // SUB R0, R1
-        memory[++i] = SUB;
-        memory[++i] = 0x01;
-
-
-        // XOR R0, R0
-        memory[++i] = XOR;
-        memory[++i] = 0x00;
-
-        // RESET
-        memory[++i] = RESET;
-        memory[++i] = 0x00;
     }
 
     void tick()
     {
         opcode = (uint32_t)((memory[pc] << 8) | (memory[pc+1] << 0));
 
-        // printf("OpCode 0x%X\n", opcode & 0xF000);
         switch (INS)
         {
         case 0x0000: // 0x0__ // MATHS
@@ -375,9 +315,6 @@ CLArgState handleArgs(int argc, char** argv)
     return argState;
 }
 
-#define WRITE_BYTE(x) out_buffer[++buffer_offset] = x
-#define WRITE_SHORT(x) (out_buffer)[++buffer_offset] = x >> 8; (out_buffer)[++buffer_offset] = x
-#define WRITE_BYTE_XY out_buffer[++buffer_offset] = x << 4 | y
 
 void assemble(const char* inputFilePath, const char* outputFilePath)
 {
@@ -421,6 +358,8 @@ void assemble(const char* inputFilePath, const char* outputFilePath)
     int buffer_offset = -1;
     memset(out_buffer, 0, input_file_size);
 
+    std::unordered_map<size_t, uint16_t> labels;
+    std::unordered_map<size_t, uint16_t> jumps;
     std::vector<std::string> lines;
 
     auto l = strtok(in_buffer, "\n");
@@ -435,6 +374,15 @@ void assemble(const char* inputFilePath, const char* outputFilePath)
         std::string ins;
         std::string arg;
         sscanf(lines[i].c_str(), "%s %[^\n]", ins.data(), arg.data());
+
+    }
+
+
+    for (int i = 0; i < lines.size(); i++)
+    {
+        std::string ins;
+        std::string arg;
+        sscanf(lines[i].c_str(), "%s %[^\n]", ins.data(), arg.data());
         
         uint8_t x = 0;
         uint8_t y = 0;
@@ -443,7 +391,7 @@ void assemble(const char* inputFilePath, const char* outputFilePath)
 
         if (!strcmp(ins.c_str(), "LD"))
         {   
-            sscanf(arg.c_str(), "R%d, %hu", &x, &imm);
+            sscanf(arg.c_str(), "R%hhd, %hu", &x, &imm);
             WRITE_BYTE(LDIMM);
             WRITE_BYTE(x << 4);
             WRITE_SHORT(imm);
@@ -454,68 +402,95 @@ void assemble(const char* inputFilePath, const char* outputFilePath)
         }
         else if(!strcmp(ins.c_str(), "ADD"))
         {
-            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            sscanf(arg.c_str(), "R%hhd, R%hhd", &x, &y);
             WRITE_BYTE(ADD);
             WRITE_BYTE_XY;
         }
         else if (!strcmp(ins.c_str(), "SUB"))
         {
-            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            sscanf(arg.c_str(), "R%hhd, R%hhd", &x, &y);
             WRITE_BYTE(SUB);
             WRITE_BYTE_XY;
         }
         else if (!strcmp(ins.c_str(), "MUL"))
         {
-            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            sscanf(arg.c_str(), "R%hhd, R%hhd", &x, &y);
             WRITE_BYTE(MUL);
             WRITE_BYTE_XY;
         }
         else if (!strcmp(ins.c_str(), "DIV"))
         {
-            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            sscanf(arg.c_str(), "R%hhd, R%hhd", &x, &y);
             WRITE_BYTE(DIV);
             WRITE_BYTE_XY;
         }
         else if (!strcmp(ins.c_str(), "AND"))
         {
-            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            sscanf(arg.c_str(), "R%hhd, R%hhd", &x, &y);
             WRITE_BYTE(AND);
             WRITE_BYTE_XY;
         }
         else if (!strcmp(ins.c_str(), "OR"))
         {
-            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            sscanf(arg.c_str(), "R%hhd, R%hhd", &x, &y);
             WRITE_BYTE(OR);
             WRITE_BYTE_XY;
         }
         else if (!strcmp(ins.c_str(), "NOT"))
         {
-            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            sscanf(arg.c_str(), "R%hhd, R%hhd", &x, &y);
             WRITE_BYTE(NOT);
             WRITE_BYTE_XY;
         }
         else if (!strcmp(ins.c_str(), "XOR"))
         {
-            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            sscanf(arg.c_str(), "R%hhd, R%hhd", &x, &y);
             WRITE_BYTE(XOR);
             WRITE_BYTE_XY;
         }
         else if (!strcmp(ins.c_str(), "SHR"))
         {
-            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            sscanf(arg.c_str(), "R%hhd, R%hhd", &x, &y);
             WRITE_BYTE(SHR);
             WRITE_BYTE_XY;
         }
         else if (!strcmp(ins.c_str(), "SHL"))
         {
-            sscanf(arg.c_str(), "R%d, R%d", &x, &y);
+            sscanf(arg.c_str(), "R%hhd, R%hhd", &x, &y);
             WRITE_BYTE(SHL);
             WRITE_BYTE_XY;
         }
+        else if (!strcmp(ins.c_str(), "LABEL"))
+        {
+            std::string label;
+            sscanf(arg.c_str(), "%s", label.data());
+            int key = std::hash<std::string>{}(label);
+            labels[key] = (uint16_t)(buffer_offset + 1);
+            printf("setting label %s as %d\n", label.c_str(), buffer_offset + 1);
+        }
+        else if (!strcmp(ins.c_str(), "JMP"))
+        {
+            std::string label;
+            sscanf(arg.c_str(), "%s", label.data());
 
+            auto key = std::hash<std::string>{}(label);
+            jumps[key] = (uint16_t)(buffer_offset + 1);
+
+            printf("jmp from %d to label %s\n", jumps[key], label.c_str());
+        }
     }
+    for (auto &&j : jumps)
+    {
 
+        buffer_offset = j.second - 1;
+        printf("jmp to offset %d asd %lu\n", buffer_offset + 1, j.first);
+        WRITE_BYTE(JMP);
+        WRITE_BYTE(0xDD);
+        WRITE_SHORT(labels[j.first]);
+    }
+    
 
+    printf("HMM %llu %llu\n", std::hash<std::string>{}("START"), std::hash<std::string>{}("END"));
 
     FILE* out = fopen(outputFilePath, "wb");
     fwrite(out_buffer, 1, sizeof(char) * input_file_size, out);
